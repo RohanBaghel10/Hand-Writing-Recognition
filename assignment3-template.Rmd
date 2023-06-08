@@ -1,0 +1,522 @@
+---
+title: "ETC3250/5250 IML Asignment 3 Solution"
+author: Rohan Baghel (32725787)
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    code_folding: show
+---
+
+
+```{r, message = FALSE, echo = -1}
+knitr::opts_chunk$set(message = FALSE, warning = FALSE)
+# Load the packages that you will use to complete this assignment.
+
+library(tidyverse)
+library(purrr)
+library(rpart)
+library(rsample)
+library(yardstick)
+library(kknn)
+library(xgboost)
+library(ranger)
+```
+
+
+## Preliminary analysis
+
+### Question 1
+
+
+
+```{r}
+
+set.seed(32725787)
+
+data_given <- read_csv(here::here("data32725787.csv"))
+
+new_records <- read_csv(here::here("newrecords32725787.csv"))
+
+image <- function(data = data_given, 
+                                  w = 28, 
+                                  h = 28, 
+                                  which = sample(1:3433, 12)) {
+  data %>% 
+    mutate(id = 1:n()) %>% 
+    filter(id %in% which) %>% 
+    pivot_longer(starts_with("V")) %>% 
+    mutate(col = rep(rep(1:w, each = h), n_distinct(id)),
+           row = rep(rep(1:h, times = w), n_distinct(id)))
+}
+
+letter <- image(data_given) %>% 
+    ggplot(aes(col, row)) +
+    geom_tile(aes(fill = value)) +
+    scale_y_reverse() +
+    theme_void(base_size = 18) +
+    guides(fill = "none") +
+    coord_equal()
+
+letter
+
+```
+
+
+### Question 2
+
+```{r}
+#INCLUDE YOUR R CODE HERE
+set.seed(32725787)
+
+letter1 <- image(data_given) %>% 
+    ggplot(aes(col, row)) +
+    geom_tile(aes(fill = value)) +
+    facet_wrap(~id, nrow = 3) +
+    scale_y_reverse() +
+    theme_void(base_size = 18) +
+    guides(fill = "none") +
+    coord_equal()
+
+letter1
+```
+
+### Question 3
+
+```{r, echo=FALSE}
+#INCLUDE YOUR R CODE HERE
+
+data_prin <- prcomp(data_given)
+
+
+data_var <- (data_prin$sdev^2 / sum(data_prin$sdev^2)) %>% head(5)
+
+data_var
+
+data_cumsum_prin <- cumsum(data_prin$sdev^2 / sum(data_prin$sdev^2)) %>% head(5)
+
+data_cumsum_prin
+
+```
+
+INCLUDE YOUR ANSWER HERE
+
+* Variation explained by Principal Component 1 = 10.8 % 
+* Variation explained by Principal Component 2 = 7.7 % 
+* Variation explained by Principal Component 3 = 6.8 % 
+* Variation explained by Principal Component 4 = 6.1 % 
+* Variation explained by Principal Component 5 = 5.5 % 
+
+* Variation explained by Cumulative summation = 37.1 % 
+
+### Question 4
+
+```{r}
+#INCLUDE YOUR R CODE HERE
+set.seed(327)
+prin_decompose <- function(k) {
+  Xnew <- data_prin$x[, k, drop = FALSE] %*% t(data_prin$rotation[, k, drop = FALSE])
+
+  as.data.frame(Xnew) %>% 
+    image()
+}
+
+
+letter %+% prin_decompose(1) + labs(title = "PC 1")
+
+letter %+% prin_decompose(2) + labs(title = "PC 2")
+```
+
+### Question 5
+
+```{r}
+#INCLUDE YOUR R CODE HERE
+
+hier_average <- hclust(dist(data_prin$x), method = "average")
+
+hier_average 
+```
+
+### Question 6
+
+```{r }
+#INCLUDE YOUR R CODE HERE
+ k <- 10
+hier_tree <- cutree(hier_average, k = 4)
+
+```
+
+
+### Question 7
+
+```{r, height = "300%" }
+set.seed(32725787)
+
+cluster_samples <- map_dfr(1:k, function(cluster) {
+  cluster_size <- sum(hier_tree == cluster)
+  sample_size <- min(10, cluster_size)
+  cluster_data <- data_given[hier_tree == cluster, ]
+  sample_rows <- sample(nrow(cluster_data), sample_size)
+  sample_data <- cluster_data[sample_rows, ]
+  mutate(sample_data, cluster = cluster)
+})
+
+image_new <- function(data = cluster_samples, 
+                  w = 28, 
+                  h = 28) {
+  data %>% 
+    mutate(id = 1:n()) %>% 
+    pivot_longer(starts_with("V")) %>% 
+    mutate(col = rep(rep(1:w, each = h), n_distinct(id)),
+           row = rep(rep(1:h, times = w), n_distinct(id)))
+}
+
+
+cluster_nums <- c("1", "2", "3", "4")
+
+
+plots <- map(cluster_nums, ~ {
+  image_new(cluster_samples) %>%
+    filter(cluster == .x) %>% 
+    ggplot(aes(col, row)) +
+    geom_tile(aes(fill = value)) +
+    facet_wrap( ~id ,ncol = 1) + 
+    scale_y_reverse() +
+    theme_void(base_size = 9) +
+    guides(fill = "none") +
+    coord_equal() +
+    ggtitle(paste("Cluster", .x))
+})
+
+
+gridExtra::grid.arrange(grobs = plots, ncol = 4)
+
+```
+
+INCLUDE YOUR ANSWER HERE
+
+The 4 cluster of letter "k" are produced here. 
+
+Here are the properties of each clusters are that can be noticed. 
+
+Cluster-1: The letters in this cluster mostly have thin strokes with letters being very thin overall. Some of the letters are inclined towards the right.
+
+Cluster-2: The letters in this cluster are thicker and do not have any inclination i.e., most of them are drawn in straight and bold manner.
+
+Cluster-3: The letters in this cluster are drawn with 4 strokes with no inclination present in any of the letters.
+
+Cluster-4: The letters in this cluster are inclined towards the right and are drawn mostly in cursive manner. 
+
+## Report
+
+
+```{r, class.source = 'fold-hide'}
+
+set.seed(123)
+
+kout <- kmeans(data_prin$x, centers = 3)
+
+kout_clust <- factor(kout$cluster)
+
+kdata <- cbind(data_given,kout_clust)
+
+cluster_samples_kdata <- map_dfr(1:k, function(cluster) {
+  cluster_size <- sum(kout_clust == cluster)
+  sample_size <- min(10, cluster_size)
+  cluster_data <- data_given[kout_clust == cluster, ]
+  sample_rows <- sample(nrow(cluster_data), sample_size)
+  sample_data <- cluster_data[sample_rows, ]
+  mutate(sample_data, cluster = cluster)
+})
+
+cluster_nums_k <- c("1", "2", "3" )
+
+plotsk <- map(cluster_nums_k, ~ {
+  image_new(cluster_samples_kdata) %>%
+    filter(cluster == .x) %>% 
+    ggplot(aes(col, row)) +
+    geom_tile(aes(fill = value)) +
+    facet_wrap( ~id ,ncol = 1) + 
+    scale_y_reverse() +
+    theme_void(base_size = 5) +
+    guides(fill = "none") +
+    coord_equal() +
+    ggtitle(paste("Cluster", .x))
+})
+
+gridExtra::grid.arrange(grobs = plotsk, ncol = 3)
+```
+
+The Cluster here are produced can be classified into 3 clusters using the "kmeans" method.
+
+The properties of each cluster can be noticed such as:
+
+Cluster-1: The letters in this cluster mostly have broad strokes and some of them are slightly inclined towards the left.  
+
+Cluster-2: The letters in this cluster mostly have thin strokes and are straight. Some them have more than 3 strokes when noticed closely. 
+
+Cluster-3: The letters in this cluster are mostly inclined towards the right, comprising both of thin and broad strokes. 
+
+### Images from new records data 
+
+```{r, class.source = 'fold-hide'}
+image_new_nr <- function(data = new_records, 
+                  w = 28, 
+                  h = 28) {
+  data %>% 
+    mutate(id = 1:n()) %>% 
+    pivot_longer(starts_with("V")) %>% 
+    mutate(col = rep(rep(1:w, each = h), n_distinct(id)),
+           row = rep(rep(1:h, times = w), n_distinct(id)))
+}
+
+set.seed(32725787)
+
+letter_nr <- image_new_nr(new_records) %>% 
+    ggplot(aes(col, row)) +
+    geom_tile(aes(fill = value)) +
+    facet_wrap(~id, nrow = 3) +
+    scale_y_reverse() +
+    theme_void(base_size = 18) +
+    guides(fill = "none") +
+    coord_equal()
+
+letter_nr
+```
+
+## Accuarcy of The Testing Models
+
+```{r, class.source = 'fold-hide'}
+
+# Data preparation for further accuracy using different methods for new records
+set.seed(32725787)
+
+train_data <- initial_split(kdata, prop = 0.7)
+
+data_tr <- training(train_data)
+data_ts <- testing(train_data)
+
+data_tr_prc <- prcomp(data_tr %>% select(-kout_clust))
+data_ts_prc <- prcomp(data_ts %>% select(-kout_clust))
+
+train_cluster <- data_tr$kout_clust
+test_cluster <- data_ts$kout_clust
+
+newkdata_tr <- as.data.frame( cbind(data_tr_prc$x[, 1:100], train_cluster))
+
+rot_k_ts <- as.data.frame(as.matrix(data_ts %>% select(-kout_clust)) %*% data_tr_prc$rotation)
+
+final_data_tr <- cbind(newkdata_tr[, 1:100], train_cluster)
+final_data_ts <- cbind(rot_k_ts[, 1:100], test_cluster) 
+```
+
+The Data preparation was done for the given "new records" using the 100 principal components of the data which explained 94 percent of the data. 
+
+```{r, class.source = 'fold-hide' }
+# Checking Accuracy through rpart model
+
+train_rpart <- rpart(train_cluster ~ ., data = final_data_tr, method = "class")
+pred_rpart_k <- final_data_ts %>% mutate(prediction= predict(train_rpart, newdata = ., type = "class"))
+
+
+```
+
+
+
+```{r, class.source = 'fold-hide'}
+# Checking Accuracy through Knn model
+train_knn <- kknn(train_cluster ~ ., 
+                 train = final_data_tr,
+                 test = final_data_ts,
+                 k = 10,
+                 distance = 2)
+
+
+
+train_kknn_pred <- final_data_ts %>%
+  mutate(prediction = train_knn$fitted.values)
+
+```
+
+
+
+```{r, class.source = 'fold-hide'}
+# Checking Accuracy through xgboost model
+
+train_xgboost <- xgboost(data = model.matrix(~ . - train_cluster, data = final_data_tr)[, -1],
+                     label = final_data_tr$train_cluster,
+                     max.depth = 2,
+                     eta = 1,
+                     nrounds = 10,
+                     objective = "multi:softmax",
+                     verbose = 0,
+                     num_class = 4)
+
+
+train_xgboost_pred <- final_data_ts %>%
+  mutate(prediction = predict(train_xgboost, model.matrix(~ . - test_cluster, data = .)[, -1])) %>% 
+  mutate(prediction = as.factor(prediction))
+
+
+```
+
+
+
+```{r, class.source = 'fold-hide'}
+
+# Checking Accuracy through random forest model
+train_rf <- ranger(train_cluster ~ ., 
+                   data = final_data_tr,
+                   mtry = floor((ncol(final_data_ts) - 1) / 3),
+                   importance = "impurity",
+                   num.trees = 500,
+                   classification = TRUE)
+
+ranger_pred <- final_data_ts %>%
+  mutate(prediction = predict(train_rf, final_data_ts)$predictions)
+
+
+```
+
+
+
+```{r, class.source = 'fold-hide'}
+tab_rpart <- metrics(pred_rpart_k, test_cluster,prediction)
+tab_kknn <-  metrics(train_kknn_pred, test_cluster,prediction)
+tab_xgboost <- metrics(train_xgboost_pred, test_cluster,prediction)
+tab_ranger <- metrics(ranger_pred, test_cluster,prediction)
+
+accu_table <-tibble(
+Model_name = c("Rpart","Knn","XgBoost","Random Forest"),
+Accuracy = c(tab_rpart$.estimate[1],tab_kknn$.estimate[1],tab_xgboost$.estimate[1],tab_ranger$.estimate[1]),
+Kappa = c(tab_rpart$.estimate[2],tab_kknn$.estimate[2],tab_xgboost$.estimate[2],tab_ranger$.estimate[2])
+)
+
+accu_table
+```
+
+Here we can observe the accuracy of each model that can be used for classification of the model. The "Knn" and "Xgboost" models are considered to best for these when compared to with other models.  
+
+### Classification through selected models
+```{r warning=FALSE, class.source = 'fold-hide'}
+#Data preparation for classification for new records
+
+train_nr <- as.data.frame(cbind(data_prin$x[,1:100],train_cluster)) %>% 
+  mutate(train_cluster = as.factor(train_cluster))
+
+rotation_new_records <- (data_prin$rotation)
+
+nr_testdata <- as.data.frame(as.matrix(new_records) %*% rotation_new_records)
+
+test_nr <- nr_testdata[1:100]
+```
+
+
+#### KNN Model
+```{r, class.source = 'fold-hide'}
+# Fitting the Knn model on new records
+set.seed(327)
+
+knn_nr <- kknn(train_cluster ~ ., 
+                 train = train_nr,
+                 test = nr_testdata,
+                 k = 3 ,
+                 distance = 3)
+
+pred_knn_nr  <- nr_testdata %>% 
+  mutate(prediction = knn_nr$fitted.values)
+
+pred_knn_nr$prediction
+
+```
+
+The classification done by "Knn" model can be considered quite accurate. 
+
+* Image-1: It has been classified into cluster-3 which has letters that are right inclined.
+
+* Image-2: It has been classified into cluster-3 which has letters that are right inclined. 
+
+* Image-3: It has been classified into cluster-3 which is quite inaccurate based on the description of the letter. It should be classified into cluster-1 as it has very thin strokes compared to other images.
+
+* Image-4:  It has been classified into cluster-2 which is quite inaccurate as it slightly inclined towards the right but has broad strokes. 
+
+* Image-5: It has been classified into cluster-3 which has letters that are right inclined.
+
+#### Xgboost Model
+
+```{r, class.source = 'fold-hide'}
+# Fitting the Xgboost model on new records
+
+set.seed(327)
+
+xgb_nr <- xgboost(data = model.matrix(~ . - train_cluster, data = train_nr)[, -1],
+                     label = train_nr$train_cluster,
+                     max.depth = 2,
+                     eta = 1,
+                     nrounds = 10,
+                     objective = "multi:softmax",
+                     num_class = 4,
+                     verbose = 0)
+
+
+xgb_pred_nr = test_nr %>% 
+mutate(prediction = predict(xgb_nr, model.matrix(~ . , data = .)[, -1])) %>% 
+  mutate(prediction = as.factor(prediction))
+
+xgb_pred_nr$prediction
+
+```
+
+The classification done by "Xgboost" model can be considered quite accurate.
+
+* Image-1: It has been classified into cluster-3 which has letters that are right inclined.
+
+* Image-2: It has been classified into cluster-2 which is quite inaccurate as it should be classified into cluster-3, because the letter is right inclined and has broad strokes.
+
+* Image-3: It has been classified into cluster-3 which is quite inaccurate because the letter has thin strokes and is not inclined in any manner.
+
+* Image-4: It has been classified into cluster-3 which has letters that are right inclined.
+
+* Image-5: It has been classified into cluster-3 which has letters that are right inclined.
+
+#### Random Forest Model
+
+
+```{r, class.source = 'fold-hide'}
+## Fitting the random forest
+set.seed(327)
+
+rf_nr <- ranger(train_cluster ~ ., 
+                   data = train_nr,
+                   mtry = floor((ncol(train_nr) - 1) / 3),
+                   importance = "impurity",
+                   num.trees = 500,
+                   classification = TRUE)
+
+
+
+ranger_pred_nr<- test_nr %>%
+  mutate(prediction = predict(rf_nr, test_nr)$predictions)
+
+ranger_pred_nr$prediction
+
+```
+
+The classification done by "Random Forest" model can be considered quite accurate.
+
+* Image-1: It has been classified into cluster-3 which has letters that are right inclined.
+
+* Image-2: It has been classified into cluster-1 which is quite inaccurate as it should be classified into cluster-3, because the letter is right inclined and has broad strokes.
+
+* Image-3: It has been classified into cluster-3 which is quite inaccurate because the letter has thin strokes and is not inclined in any manner.
+
+* Image-4: It has been classified into cluster-3 which has letters that are right inclined.
+
+* Image-5: It has been classified into cluster-3 which has letters that are right inclined.
+
+## Conclusion 
+
+The classification was performed using the chosen models. The accuracy of KNN model has the highest accuarcy compared to other models. The classification done by the KNN model is recommended but should be cross checked to reduce chances of error. 
+
+##### References
+
+* ETC-5250 Introduction to Machine Learning "Lecture Slides"
